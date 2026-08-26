@@ -242,12 +242,12 @@ function calculateSystemMetrics(current, previous, previousSampleTime, now) {
 }
 
 // argv list, never a shell string; the username rides as a single element.
-// The `timeout 3` wrapper bounds a hung ps and the pinned LC_ALL=C keeps
-// lstart's five-token birth time ("Mon Aug 25 20:29:30 2026") stable no
-// matter the host locale.
+// The hard 3s deadline escalates to SIGKILL after one more second, and the
+// pinned LC_ALL=C keeps lstart's five-token birth time
+// ("Mon Aug 25 20:29:30 2026") stable no matter the host locale.
 function buildPsCommand(user) {
   var name = String(user || "").trim()
-  var argv = ["timeout", "3", "env", "LC_ALL=C", "ps"]
+  var argv = ["timeout", "--kill-after=1", "3", "env", "LC_ALL=C", "ps"]
   if (name) argv.push("-u", name)
   argv.push("-o", "pid=,lstart=,pcpu=,pmem=,comm=", "--sort=-pcpu")
   return argv
@@ -847,6 +847,72 @@ function parseNvidiaHardware(raw) {
   }
 }
 
+// ---- bounded command boundary ----------------------------------------------
+//
+// Every persistent StdioCollector producer routes its command through the
+// plugin-local bin/bounded-command helper, so output reaches the QML engine
+// only after passing a producer-side cap (the helper buffers at most
+// MAX_BYTES of child stdout, discards child stderr, and emits the buffer only
+// when the child exits cleanly). These helpers are the one shared convention
+// every QML root uses to locate the helper, pick its per-source cap and wrap
+// an argv; no collector builds its own wrapping.
+
+// Hard ceiling the helper itself enforces (8 MiB); the per-kind caps below
+// stay far beneath it. Each cap covers the largest payload its producer
+// realistically emits, so healthy output always fits while a runaway
+// producer is cut off long before it can exhaust memory.
+var BOUNDED_COMMAND_MAX_BYTES = 8 * 1024 * 1024
+var COMMAND_OUTPUT_LIMITS = {
+  stats: 4096,
+  sensors: 1048576,
+  disk: 16384,
+  gpu: 65536,
+  processes: 2097152,
+  lspci: 1048576,
+  uname: 8192,
+  nvidiaInfo: 65536
+}
+
+// QUrl (as Qt.resolvedUrl hands to QML) or plain string -> local filesystem
+// path: only a *leading* "file://" is stripped and valid percent escapes
+// decode ("/my%20dir" -> "/my dir"). Malformed escapes ("%zz", a truncated
+// or trailing "%") return the undecoded stripped value instead of throwing,
+// so a surprising URL can never take a collector down.
+function localFilePath(value) {
+  var text = String(value || "")
+  if (text.indexOf("file://") === 0) text = text.substring(7)
+  try {
+    return decodeURIComponent(text)
+  } catch (error) {
+    return text
+  }
+}
+
+// Byte cap for one producer kind, or 0 when the kind is unknown. The builder
+// treats 0 as invalid and refuses to launch rather than falling back unbounded.
+function commandOutputLimit(kind) {
+  var key = String(kind || "")
+  return Object.prototype.hasOwnProperty.call(COMMAND_OUTPUT_LIMITS, key)
+    ? COMMAND_OUTPUT_LIMITS[key]
+    : 0
+}
+
+// argv list routing COMMAND through the bounded helper, or [] when the helper
+// path is blank, the cap is not an integer in 1..8388608, or argv is empty —
+// mirroring buildPidfdSignalCommand's "never launch garbage" contract. The
+// result is a fresh array per call and the producer argv is never mutated.
+function buildBoundedCommand(helperPath, maxBytes, argv) {
+  var helper = String(helperPath || "").trim()
+  if (helper === "") return []
+  var cap = Number(maxBytes)
+  if (!isFinite(cap) || cap < 1 || cap > BOUNDED_COMMAND_MAX_BYTES || cap % 1 !== 0)
+    return []
+  if (!Array.isArray(argv) || argv.length < 1) return []
+  var wrapped = [helper, String(cap)]
+  for (var index = 0; index < argv.length; index++) wrapped.push(argv[index])
+  return wrapped
+}
+
 if (typeof module === "object" && typeof module.exports === "object") {
   module.exports = {
     finiteNumber: finiteNumber,
@@ -889,6 +955,9 @@ if (typeof module === "object" && typeof module.exports === "object") {
     parseOsRelease: parseOsRelease,
     parseKernelInfo: parseKernelInfo,
     parseLspciGraphics: parseLspciGraphics,
-    parseNvidiaHardware: parseNvidiaHardware
+    parseNvidiaHardware: parseNvidiaHardware,
+    localFilePath: localFilePath,
+    commandOutputLimit: commandOutputLimit,
+    buildBoundedCommand: buildBoundedCommand
   }
 }

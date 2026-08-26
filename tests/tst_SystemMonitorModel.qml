@@ -61,6 +61,9 @@ Item {
             compare(typeof MonitorModel.sensorMonitorId, "function")
             compare(typeof MonitorModel.isSensorMonitorId, "function")
             compare(typeof MonitorModel.sensorMonitorType, "function")
+            compare(typeof MonitorModel.localFilePath, "function")
+            compare(typeof MonitorModel.commandOutputLimit, "function")
+            compare(typeof MonitorModel.buildBoundedCommand, "function")
         }
 
         // ---- numeric guarding ----------------------------------------------
@@ -431,34 +434,36 @@ Item {
 
         function test_buildPsCommand_with_user() {
             var argv = MonitorModel.buildPsCommand("ryan")
-            compare(argv.length, 10)
+            compare(argv.length, 11)
             compare(argv[0], "timeout")
-            compare(argv[1], "3")
-            compare(argv[2], "env")
-            compare(argv[3], "LC_ALL=C")
-            compare(argv[4], "ps")
-            compare(argv[5], "-u")
-            compare(argv[6], "ryan")
-            compare(argv[7], "-o")
-            compare(argv[8], "pid=,lstart=,pcpu=,pmem=,comm=")
-            compare(argv[9], "--sort=-pcpu")
+            compare(argv[1], "--kill-after=1")
+            compare(argv[2], "3")
+            compare(argv[3], "env")
+            compare(argv[4], "LC_ALL=C")
+            compare(argv[5], "ps")
+            compare(argv[6], "-u")
+            compare(argv[7], "ryan")
+            compare(argv[8], "-o")
+            compare(argv[9], "pid=,lstart=,pcpu=,pmem=,comm=")
+            compare(argv[10], "--sort=-pcpu")
         }
 
         function test_buildPsCommand_without_or_padded_user() {
             var anon = MonitorModel.buildPsCommand("")
-            compare(anon.length, 8)
+            compare(anon.length, 9)
             compare(anon[0], "timeout")
-            compare(anon[1], "3")
-            compare(anon[2], "env")
-            compare(anon[3], "LC_ALL=C")
-            compare(anon[4], "ps")
-            compare(anon[5], "-o")
-            compare(anon[6], "pid=,lstart=,pcpu=,pmem=,comm=")
-            compare(anon[7], "--sort=-pcpu")
+            compare(anon[1], "--kill-after=1")
+            compare(anon[2], "3")
+            compare(anon[3], "env")
+            compare(anon[4], "LC_ALL=C")
+            compare(anon[5], "ps")
+            compare(anon[6], "-o")
+            compare(anon[7], "pid=,lstart=,pcpu=,pmem=,comm=")
+            compare(anon[8], "--sort=-pcpu")
 
             var padded = MonitorModel.buildPsCommand("  ryan  ")
-            compare(padded.length, 10)
-            compare(padded[6], "ryan")
+            compare(padded.length, 11)
+            compare(padded[7], "ryan")
         }
 
         function test_buildPidfdSignalCommand() {
@@ -475,6 +480,103 @@ Item {
                                                          "").length, 0)
             compare(MonitorModel.buildPidfdSignalCommand("", 1234,
                                                          "Mon Aug 5 09:08:15 2026").length, 0)
+        }
+
+        // ---- bounded command boundary --------------------------------------
+
+        function test_localFilePath_strips_and_decodes_file_urls() {
+            compare(MonitorModel.localFilePath(
+                        "file:///home/ryan/.config/omarchy/plugins/bitr0t.system-monitor/bin/bounded-command"),
+                    "/home/ryan/.config/omarchy/plugins/bitr0t.system-monitor/bin/bounded-command")
+            compare(MonitorModel.localFilePath("file:///home/my%20dir/tool"),
+                    "/home/my dir/tool")
+
+            // a real resolved QUrl stringifies and strips the same way
+            var resolved = MonitorModel.localFilePath(
+                        Qt.resolvedUrl("SystemMonitorModel.js"))
+            verify(resolved.indexOf("file://") === -1)
+            verify(resolved.length > "SystemMonitorModel.js".length)
+            compare(resolved.substring(resolved.length - "SystemMonitorModel.js".length),
+                    "SystemMonitorModel.js")
+        }
+
+        function test_localFilePath_keeps_plain_and_malformed_values() {
+            compare(MonitorModel.localFilePath("/usr/bin/python3"), "/usr/bin/python3")
+            compare(MonitorModel.localFilePath("bin/bounded-command"),
+                    "bin/bounded-command")
+            // only a leading file:// is stripped
+            compare(MonitorModel.localFilePath("https://example.com/x"),
+                    "https://example.com/x")
+            compare(MonitorModel.localFilePath("/x/file:///y"), "/x/file:///y")
+            // malformed escapes return undecoded instead of throwing
+            compare(MonitorModel.localFilePath("file:///home/100%/x"), "/home/100%/x")
+            compare(MonitorModel.localFilePath("file:///a%zz"), "/a%zz")
+            compare(MonitorModel.localFilePath("file:///%"), "/%")
+            compare(MonitorModel.localFilePath(null), "")
+            compare(MonitorModel.localFilePath(undefined), "")
+        }
+
+        function test_commandOutputLimit_every_kind_and_unknown() {
+            compare(MonitorModel.commandOutputLimit("stats"), 4096)
+            compare(MonitorModel.commandOutputLimit("sensors"), 1048576)
+            compare(MonitorModel.commandOutputLimit("disk"), 16384)
+            compare(MonitorModel.commandOutputLimit("gpu"), 65536)
+            compare(MonitorModel.commandOutputLimit("processes"), 2097152)
+            compare(MonitorModel.commandOutputLimit("lspci"), 1048576)
+            compare(MonitorModel.commandOutputLimit("uname"), 8192)
+            compare(MonitorModel.commandOutputLimit("nvidiaInfo"), 65536)
+            // unknown kinds report 0 so callers never launch unbounded
+            compare(MonitorModel.commandOutputLimit("bogus"), 0)
+            compare(MonitorModel.commandOutputLimit(""), 0)
+            compare(MonitorModel.commandOutputLimit(null), 0)
+            compare(MonitorModel.commandOutputLimit("constructor"), 0)
+        }
+
+        function test_buildBoundedCommand_wraps_the_whole_producer_argv() {
+            var argv = ["timeout", "3", "env", "LC_ALL=C", "ps", "-o", "pid="]
+            compareIdList(MonitorModel.buildBoundedCommand(
+                              "/plugin/bin/bounded-command", 2097152, argv),
+                          ["/plugin/bin/bounded-command", "2097152",
+                           "timeout", "3", "env", "LC_ALL=C", "ps", "-o", "pid="])
+            // the cap rides as its decimal string
+            compareIdList(MonitorModel.buildBoundedCommand("/h", 4096, ["uname", "-srmo"]),
+                          ["/h", "4096", "uname", "-srmo"])
+        }
+
+        function test_buildBoundedCommand_rejects_invalid_helper_cap_argv() {
+            // caps outside 1..8388608 or non-integers
+            var badCaps = [0, -1, 8388609, 12.5, NaN, Infinity, "abc", null, undefined]
+            for (var index = 0; index < badCaps.length; index++)
+                compare(MonitorModel.buildBoundedCommand(
+                            "/h", badCaps[index], ["x"]).length, 0)
+            // valid extremes
+            compareIdList(MonitorModel.buildBoundedCommand("/h", 1, ["x"]), ["/h", "1", "x"])
+            compareIdList(MonitorModel.buildBoundedCommand("/h", 8388608, ["x"]),
+                          ["/h", "8388608", "x"])
+            // missing helper
+            compare(MonitorModel.buildBoundedCommand("", 4096, ["x"]).length, 0)
+            compare(MonitorModel.buildBoundedCommand("   ", 4096, ["x"]).length, 0)
+            compare(MonitorModel.buildBoundedCommand(null, 4096, ["x"]).length, 0)
+            // empty or missing argv
+            compare(MonitorModel.buildBoundedCommand("/h", 4096, []).length, 0)
+            compare(MonitorModel.buildBoundedCommand("/h", 4096, null).length, 0)
+            compare(MonitorModel.buildBoundedCommand("/h", 4096, undefined).length, 0)
+            compare(MonitorModel.buildBoundedCommand("/h", 4096, "uname").length, 0)
+            compare(MonitorModel.buildBoundedCommand(
+                        "/h", 4096, ({ 0: "uname", length: 1 })).length, 0)
+        }
+
+        function test_buildBoundedCommand_returns_fresh_arrays() {
+            var argv = ["sensors", "-j"]
+            var first = MonitorModel.buildBoundedCommand("/h", 1048576, argv)
+            var second = MonitorModel.buildBoundedCommand("/h", 1048576, argv)
+            verify(first !== second)
+            compareIdList(first, second)
+            // input argv never mutated, results never share state
+            compareIdList(argv, ["sensors", "-j"])
+            first.push("poison")
+            compareIdList(MonitorModel.buildBoundedCommand("/h", 1048576, argv),
+                          ["/h", "1048576", "sensors", "-j"])
         }
 
         // ---- process parsing -----------------------------------------------------

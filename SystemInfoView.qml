@@ -69,6 +69,8 @@ Item {
     }
     return false
   }
+  readonly property string boundedCommandPath: MonitorModel.localFilePath(
+    Qt.resolvedUrl("bin/bounded-command"))
   readonly property string headerStatus: refreshing
     ? "COLLECTING" : (hasCompletedRefresh ? "CURRENT" : "WAITING")
 
@@ -288,17 +290,24 @@ Item {
     probeProcessExited = false
     probeExitCode = -1
     probeCancelled = false
-    if (kind === "lspci")
-      probeProcess.command = ["timeout", "--kill-after=2", "5", "lspci", "-mm", "-D"]
-    else if (kind === "uname")
-      probeProcess.command = ["timeout", "--kill-after=2", "5", "uname", "-srmo"]
-    else
-      probeProcess.command = [
+    var argv = []
+    var limitKind = "nvidiaInfo"
+    if (kind === "lspci") {
+      argv = ["timeout", "--kill-after=2", "5", "lspci", "-mm", "-D"]
+      limitKind = "lspci"
+    } else if (kind === "uname") {
+      argv = ["timeout", "--kill-after=2", "5", "uname", "-srmo"]
+      limitKind = "uname"
+    } else {
+      argv = [
         "timeout", "--kill-after=3", "10",
         "/usr/bin/nvidia-smi",
         "--query-gpu=name,driver_version,memory.total",
         "--format=csv,noheader,nounits"
       ]
+    }
+    probeProcess.command = MonitorModel.buildBoundedCommand(
+      boundedCommandPath, MonitorModel.commandOutputLimit(limitKind), argv)
     probeProcess.generation = refreshGeneration
     probeProcess.running = true
   }

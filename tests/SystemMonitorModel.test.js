@@ -27,12 +27,14 @@ function sampleStats(overrides) {
 describe('module shape', () => {
   it('exports exactly the contracted API', () => {
     assert.deepEqual(Object.keys(Model).sort(), [
-      'appendHistory', 'buildPidfdSignalCommand', 'buildPsCommand', 'calculateSystemMetrics',
-      'chipMonitorEnabled', 'chipMonitorIds', 'clampPercent', 'compareProcessRows',
-      'defaultChipMonitors', 'filterAndSortProcesses', 'findProcessByPid', 'finiteNumber',
-      'formatBytes', 'formatCompactRate', 'formatCompactUptime', 'formatLoad', 'formatPercent',
-      'formatRate', 'formatUptime', 'isSensorMonitorId', 'networkScaleFor', 'normalizeChipMode',
-      'normalizeChipMonitors', 'normalizeHardwareValue', 'normalizeStartToken', 'parseCpuInfo', 'parseDiskOutput',
+      'appendHistory', 'buildBoundedCommand', 'buildPidfdSignalCommand', 'buildPsCommand',
+      'calculateSystemMetrics', 'chipMonitorEnabled', 'chipMonitorIds', 'clampPercent',
+      'commandOutputLimit', 'compareProcessRows', 'defaultChipMonitors',
+      'filterAndSortProcesses', 'findProcessByPid', 'finiteNumber', 'formatBytes',
+      'formatCompactRate', 'formatCompactUptime', 'formatLoad', 'formatPercent',
+      'formatRate', 'formatUptime', 'isSensorMonitorId', 'localFilePath',
+      'networkScaleFor', 'normalizeChipMode', 'normalizeChipMonitors',
+      'normalizeHardwareValue', 'normalizeStartToken', 'parseCpuInfo', 'parseDiskOutput',
       'parseGpuOutput', 'parseKernelInfo', 'parseLspciGraphics', 'parseMemInfo',
       'parseNvidiaHardware', 'parseOsRelease', 'parsePsOutput', 'parseSensorsJson',
       'parseStatsOutput', 'recentHistory', 'sensorMonitorId', 'sensorMonitorType',
@@ -496,18 +498,21 @@ describe('calculateSystemMetrics', () => {
 
 describe('buildPsCommand', () => {
   const fields = 'pid=,lstart=,pcpu=,pmem=,comm='
-  it('wraps ps in a 3s timeout with a pinned C locale', () => {
+  it('wraps ps in a hard 3s timeout with a pinned C locale', () => {
     assert.deepEqual(Model.buildPsCommand('ryan'), [
-      'timeout', '3', 'env', 'LC_ALL=C', 'ps', '-u', 'ryan',
+      'timeout', '--kill-after=1', '3', 'env', 'LC_ALL=C', 'ps', '-u', 'ryan',
       '-o', fields, '--sort=-pcpu'
     ])
     assert.deepEqual(Model.buildPsCommand('  ryan  '), [
-      'timeout', '3', 'env', 'LC_ALL=C', 'ps', '-u', 'ryan',
+      'timeout', '--kill-after=1', '3', 'env', 'LC_ALL=C', 'ps', '-u', 'ryan',
       '-o', fields, '--sort=-pcpu'
     ])
   })
   it('omits -u when no usable username exists', () => {
-    const bare = ['timeout', '3', 'env', 'LC_ALL=C', 'ps', '-o', fields, '--sort=-pcpu']
+    const bare = [
+      'timeout', '--kill-after=1', '3', 'env', 'LC_ALL=C', 'ps',
+      '-o', fields, '--sort=-pcpu'
+    ]
     assert.deepEqual(Model.buildPsCommand(''), bare)
     assert.deepEqual(Model.buildPsCommand('   '), bare)
     assert.deepEqual(Model.buildPsCommand(undefined), bare)
@@ -755,6 +760,102 @@ describe('buildPidfdSignalCommand', () => {
     const b = Model.buildPidfdSignalCommand('/h', 1, 'Mon Jan 1 00:00:00 2026')
     assert.notEqual(a, b)
     assert.deepEqual(a, b)
+  })
+})
+
+// ---- bounded command boundary ----------------------------------------------
+
+describe('localFilePath', () => {
+  it('strips a leading file:// and decodes valid percent escapes', () => {
+    assert.equal(Model.localFilePath(
+      'file:///home/ryan/.config/omarchy/plugins/bitr0t.system-monitor/bin/bounded-command'),
+    '/home/ryan/.config/omarchy/plugins/bitr0t.system-monitor/bin/bounded-command')
+    assert.equal(Model.localFilePath('file:///home/my%20dir/tool'), '/home/my dir/tool')
+    assert.equal(Model.localFilePath('file:///opt/a%2Fb'), '/opt/a/b')
+  })
+  it('stringifies QUrl-like values and passes plain paths through untouched', () => {
+    assert.equal(Model.localFilePath({ toString: () => 'file:///opt/tool' }), '/opt/tool')
+    assert.equal(Model.localFilePath('/usr/bin/python3'), '/usr/bin/python3')
+    assert.equal(Model.localFilePath('bin/bounded-command'), 'bin/bounded-command')
+  })
+  it('strips only a leading file://', () => {
+    assert.equal(Model.localFilePath('https://example.com/x'), 'https://example.com/x')
+    assert.equal(Model.localFilePath('/x/file:///y'), '/x/file:///y')
+  })
+  it('returns the undecoded stripped value instead of throwing on malformed escapes', () => {
+    assert.equal(Model.localFilePath('file:///home/100%/x'), '/home/100%/x')
+    assert.equal(Model.localFilePath('file:///a%zz'), '/a%zz')
+    assert.equal(Model.localFilePath('file:///a%2'), '/a%2')
+    assert.equal(Model.localFilePath('file:///%'), '/%')
+  })
+  it('normalizes missing input to an empty string', () => {
+    assert.equal(Model.localFilePath(null), '')
+    assert.equal(Model.localFilePath(undefined), '')
+  })
+})
+
+describe('commandOutputLimit', () => {
+  it('returns the contracted cap for every producer kind', () => {
+    assert.equal(Model.commandOutputLimit('stats'), 4096)
+    assert.equal(Model.commandOutputLimit('sensors'), 1048576)
+    assert.equal(Model.commandOutputLimit('disk'), 16384)
+    assert.equal(Model.commandOutputLimit('gpu'), 65536)
+    assert.equal(Model.commandOutputLimit('processes'), 2097152)
+    assert.equal(Model.commandOutputLimit('lspci'), 1048576)
+    assert.equal(Model.commandOutputLimit('uname'), 8192)
+    assert.equal(Model.commandOutputLimit('nvidiaInfo'), 65536)
+  })
+  it('returns 0 for unknown kinds', () => {
+    assert.equal(Model.commandOutputLimit('bogus'), 0)
+    assert.equal(Model.commandOutputLimit(''), 0)
+    assert.equal(Model.commandOutputLimit('Stats'), 0) // kinds are case-sensitive
+    assert.equal(Model.commandOutputLimit(null), 0)
+    assert.equal(Model.commandOutputLimit(undefined), 0)
+    assert.equal(Model.commandOutputLimit('constructor'), 0) // no prototype leak
+  })
+})
+
+describe('buildBoundedCommand', () => {
+  it('wraps a complete producer argv under the helper and cap', () => {
+    const ps = ['timeout', '3', 'env', 'LC_ALL=C', 'ps', '-o', 'pid=', '--sort=-pcpu']
+    assert.deepEqual(Model.buildBoundedCommand('/plugin/bin/bounded-command', 2097152, ps), [
+      '/plugin/bin/bounded-command', '2097152',
+      'timeout', '3', 'env', 'LC_ALL=C', 'ps', '-o', 'pid=', '--sort=-pcpu'
+    ])
+    // numeric-string caps coerce, like every other numeric helper here
+    assert.deepEqual(Model.buildBoundedCommand('/h', '4096', ['uname', '-srmo']),
+      ['/h', '4096', 'uname', '-srmo'])
+  })
+  it('accepts the full valid cap range', () => {
+    assert.deepEqual(Model.buildBoundedCommand('/h', 1, ['x']), ['/h', '1', 'x'])
+    assert.deepEqual(Model.buildBoundedCommand('/h', 8388608, ['x']),
+      ['/h', '8388608', 'x'])
+  })
+  it('refuses caps outside 1..8388608 or non-integers', () => {
+    for (const cap of [0, -1, 8388609, 12.5, NaN, Infinity, 'abc', null, undefined])
+      assert.deepEqual(Model.buildBoundedCommand('/h', cap, ['x']), [], `cap ${cap}`)
+  })
+  it('refuses a missing helper path', () => {
+    for (const helper of ['', '   ', null, undefined])
+      assert.deepEqual(Model.buildBoundedCommand(helper, 4096, ['x']), [], `helper ${helper}`)
+  })
+  it('refuses an empty or missing argv', () => {
+    assert.deepEqual(Model.buildBoundedCommand('/h', 4096, []), [])
+    assert.deepEqual(Model.buildBoundedCommand('/h', 4096, null), [])
+    assert.deepEqual(Model.buildBoundedCommand('/h', 4096, undefined), [])
+    assert.deepEqual(Model.buildBoundedCommand('/h', 4096, 'uname'), [])
+    assert.deepEqual(Model.buildBoundedCommand('/h', 4096, { 0: 'uname', length: 1 }), [])
+  })
+  it('returns a fresh wrapped argv without mutating the producer argv', () => {
+    const argv = ['sensors', '-j']
+    const first = Model.buildBoundedCommand('/h', 1048576, argv)
+    const second = Model.buildBoundedCommand('/h', 1048576, argv)
+    assert.deepEqual(argv, ['sensors', '-j']) // input untouched
+    assert.notEqual(first, second)            // fresh array per call
+    assert.deepEqual(first, second)
+    first.push('poison')                      // results never share state
+    assert.deepEqual(Model.buildBoundedCommand('/h', 1048576, argv),
+      ['/h', '1048576', 'sensors', '-j'])
   })
 })
 

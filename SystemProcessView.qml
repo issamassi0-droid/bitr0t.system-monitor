@@ -78,11 +78,15 @@ Item {
 
   // Colocated race-free termination helper, resolved against this QML file
   // so hosts embedding the view from anywhere find the plugin's own copy.
-  readonly property string helperPath: {
-    var url = String(Qt.resolvedUrl("bin/pidfd-signal"))
-    var path = url.indexOf("file://") === 0 ? url.substring(7) : url
-    return decodeURIComponent(path)
-  }
+  readonly property string helperPath:
+    MonitorModel.localFilePath(Qt.resolvedUrl("bin/pidfd-signal"))
+
+  // Colocated output-bounding wrapper. Every producer whose output can grow
+  // without bound runs through it, so QML only ever parses what fits under
+  // the producer's cap. The pidfd helper above is source-only and stays
+  // direct — its output is a fixed, tiny exit code, never a stream.
+  readonly property string boundedCommandPath:
+    MonitorModel.localFilePath(Qt.resolvedUrl("bin/bounded-command"))
 
   // Hard bounds: parse at most this many rows out of any one ps snapshot and
   // render at most rowLimit of them, so a pathological session can never
@@ -150,13 +154,19 @@ Item {
 
   // argv list, never a shell string. The username comes from the environment,
   // not from anything the user typed, and it rides as a single argv element.
+  // The ps run itself is wrapped by bin/bounded-command, which caps the
+  // snapshot at the processes limit (2 MiB) and fixes stderr to nothing
+  // before a single byte reaches QML's collector.
   function refresh() {
     // Never overlap probes: if ps is still draining, this tick is skipped.
     if (listProc.running) return
     pollSerial = pollSerial + 1
     listProc.serial = pollSerial
     listProc.lastExitCode = 0
-    listProc.command = MonitorModel.buildPsCommand(String(Quickshell.env("USER") || ""))
+    listProc.command = MonitorModel.buildBoundedCommand(
+      boundedCommandPath,
+      MonitorModel.commandOutputLimit("processes"),
+      MonitorModel.buildPsCommand(String(Quickshell.env("USER") || "")))
     listProc.running = true
   }
 

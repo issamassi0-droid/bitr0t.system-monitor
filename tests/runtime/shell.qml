@@ -12,12 +12,13 @@
 // logs the QML error) or trips an explicit check below.
 //
 // Nothing here talks to the live shell over IPC, moves the pointer, takes
-// focus, kills a process, or writes outside the temp config: every view is
-// created with active: false, so no stats poll, probe, or window ever
-// starts. The shell quits immediately after the run.
+// focus, kills a user process, or writes outside the temp config. Production
+// views stay inactive; one isolated bounded-command probe intentionally
+// overflows by one byte to verify that no partial output reaches QML.
 
 import QtQuick
 import Quickshell
+import Quickshell.Io
 
 import "plugin" as Plugin
 
@@ -34,6 +35,9 @@ ShellRoot {
     property int barSize: 32
     property string position: "top"
     property color foreground: "#f4f6f8"
+    property color barForeground: foreground
+    property color urgent: "#ff5577"
+    property bool foregroundAnimationEnabled: false
     property string fontFamily: "smoke-monospace"
     property bool transparent: false
     property var runLog: []
@@ -128,6 +132,11 @@ ShellRoot {
   }
 
   Component {
+    id: barWidgetFactory
+    Plugin.BarWidget {}
+  }
+
+  Component {
     id: performanceFactory
     Plugin.SystemPerformanceView {
       active: false
@@ -176,6 +185,62 @@ ShellRoot {
       fail(message)
   }
 
+  property bool staticSmokeComplete: false
+  property bool boundedOverflowComplete: false
+  property bool boundedOverflowStreamFinished: false
+  property bool boundedOverflowProcessExited: false
+  property int boundedOverflowExitCode: -1
+  property string boundedOverflowOutput: ""
+
+  function localPath(url) {
+    var value = String(url || "")
+    if (value.indexOf("file://") === 0)
+      value = value.substring(7)
+    return decodeURIComponent(value)
+  }
+
+  function maybePass() {
+    if (staticSmokeComplete && boundedOverflowComplete && !failed)
+      console.log("SYSTEM_MONITOR_RUNTIME_SMOKE_PASS")
+  }
+
+  function finishBoundedOverflowSmoke() {
+    if (!boundedOverflowStreamFinished || !boundedOverflowProcessExited)
+      return
+    check(boundedOverflowExitCode === 74,
+      "bounded-command overflow must exit 74")
+    check(boundedOverflowOutput === "",
+      "bounded-command overflow leaked partial output to StdioCollector")
+    boundedOverflowComplete = true
+    maybePass()
+  }
+
+  Process {
+    id: boundedOverflowProcess
+    running: false
+    command: [
+      root.localPath(Qt.resolvedUrl("plugin/bin/bounded-command")),
+      "4",
+      "/usr/bin/printf",
+      "%s",
+      "abcde"
+    ]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.boundedOverflowOutput = String(text || "")
+        root.boundedOverflowStreamFinished = true
+        root.finishBoundedOverflowSmoke()
+      }
+    }
+    stderr: StdioCollector { waitForEnd: true }
+    onExited: function(exitCode) {
+      root.boundedOverflowExitCode = exitCode
+      root.boundedOverflowProcessExited = true
+      root.finishBoundedOverflowSmoke()
+    }
+  }
+
   function make(factory, label, props) {
     var object = null
     try {
@@ -208,6 +273,55 @@ ShellRoot {
     check(theme.animationDuration >= 0, "theme.animationDuration did not resolve")
   }
 
+  function smokeSensorTransaction() {
+    var widget = make(barWidgetFactory, "BarWidget", {
+      "bar": fakeBar,
+      "settings": ({
+        "chipMode": "instrument",
+        "monitors": ["cpu", "memory", "network"]
+      })
+    })
+    if (!widget)
+      return
+    check(widget.boundedCommandPath.indexOf("/bin/bounded-command") > 0,
+      "bar probes did not resolve the bounded producer")
+
+    var firstOutput = "{\"k10temp-pci-00c3\":{\"Adapter\":\"PCI adapter\","
+      + "\"Tctl\":{\"temp1_input\":42,\"temp1_max\":90,\"temp1_crit\":100}}}"
+
+    // Stream completion first: no sensor publication until process exit.
+    widget.pendingSensorsOutput = firstOutput
+    widget.sensorExitCode = 0
+    widget.sensorStreamFinished = true
+    widget.sensorProcessExited = false
+    widget.finishSensorsIfReady()
+    check(widget.availableSensors.length === 0,
+      "sensor transaction published before process exit")
+    widget.sensorProcessExited = true
+    widget.finishSensorsIfReady()
+    check(widget.availableSensors.length === 1
+      && widget.availableSensors[0].value === 42
+      && widget.sensorsStale === false,
+      "sensor transaction did not publish after stream+exit completion")
+
+    // Exit first: stale state remains until the matching stream completes.
+    widget.markSensorsStale()
+    widget.pendingSensorsOutput = ""
+    widget.sensorExitCode = 0
+    widget.sensorStreamFinished = false
+    widget.sensorProcessExited = true
+    widget.finishSensorsIfReady()
+    check(widget.availableSensors.length === 0 && widget.sensorsStale === true,
+      "sensor transaction published before stream completion")
+    widget.pendingSensorsOutput = firstOutput.replace("42", "43")
+    widget.sensorStreamFinished = true
+    widget.finishSensorsIfReady()
+    check(widget.availableSensors.length === 1
+      && widget.availableSensors[0].value === 43
+      && widget.sensorsStale === false,
+      "sensor transaction did not publish after exit+stream completion")
+  }
+
   function smokePerformance() {
     var view = make(performanceFactory, "SystemPerformanceView", {
       "hostWidget": fakeHost,
@@ -215,6 +329,8 @@ ShellRoot {
     })
     if (!view)
       return
+    check(view.boundedCommandPath.indexOf("/bin/bounded-command") > 0,
+      "performance probes did not resolve the bounded producer")
     check(view.cpuUsage === 42, "performance cpuUsage must bind to the host")
     check(view.memoryUsage === 63, "performance memoryUsage must bind to the host")
     check(view.uptimeSeconds === 86400, "performance uptimeSeconds must bind to the host")
@@ -280,6 +396,8 @@ ShellRoot {
     if (!view)
       return
     check(view.active === false, "process view must stay inactive")
+    check(view.boundedCommandPath.indexOf("/bin/bounded-command") > 0,
+      "process probes did not resolve the bounded producer")
     check(view.sortKey === "cpu" && view.sortDescending === true,
       "process view default sort must be cpu descending")
     check(view.visibleProcesses.length === 0,
@@ -355,6 +473,8 @@ ShellRoot {
     })
     if (!view)
       return
+    check(view.boundedCommandPath.indexOf("/bin/bounded-command") > 0,
+      "info probes did not resolve the bounded producer")
     check(view.implicitHeight > 0, "info view must resolve its layout")
     check(view.active === false, "info view must stay inactive")
   }
@@ -373,6 +493,7 @@ ShellRoot {
 
   Component.onCompleted: {
     smokeTheme()
+    smokeSensorTransaction()
     smokePerformance()
     smokeProcess()
     smokeSettings()
@@ -380,7 +501,8 @@ ShellRoot {
     smokeTaskWindow()
     check(!taskWindowInstance || taskWindowInstance.opened === false,
       "task window must still be closed at the end of the run")
-    if (!failed)
-      console.log("SYSTEM_MONITOR_RUNTIME_SMOKE_PASS")
+    staticSmokeComplete = true
+    boundedOverflowProcess.running = true
+    maybePass()
   }
 }

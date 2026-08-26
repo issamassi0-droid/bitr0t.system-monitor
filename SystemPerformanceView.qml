@@ -64,6 +64,8 @@ Item {
   property bool probeProcessExited: false
   property bool probeCancelled: false
   property int probeExitCode: -1
+  readonly property string boundedCommandPath: MonitorModel.localFilePath(
+    Qt.resolvedUrl("bin/bounded-command"))
 
   readonly property int visibleReadoutCount: gpuCommandAvailable && !gpuProbeFailed ? 4 : 3
 
@@ -241,8 +243,10 @@ Item {
     probeExitCode = -1
     probeCancelled = false
     probeProcess.command = kind === "disk"
-      ? ["timeout", "3", "df", "-P", "-B1", "/"]
-      : ["timeout", "5", "/usr/bin/nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu", "--format=csv,noheader,nounits", "-i", "0"]
+      ? MonitorModel.buildBoundedCommand(boundedCommandPath, MonitorModel.commandOutputLimit("disk"),
+        ["timeout", "--kill-after=1", "3", "df", "-P", "-B1", "/"])
+      : MonitorModel.buildBoundedCommand(boundedCommandPath, MonitorModel.commandOutputLimit("gpu"),
+        ["timeout", "--kill-after=1", "5", "/usr/bin/nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu", "--format=csv,noheader,nounits", "-i", "0"])
     probeProcess.running = true
   }
 

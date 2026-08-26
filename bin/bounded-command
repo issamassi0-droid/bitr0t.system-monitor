@@ -1,0 +1,228 @@
+#!/usr/bin/python3
+"""bounded-command — run a producer and forward its stdout only when the
+output fits a caller-chosen byte budget and the producer exits 0.
+
+Usage: bounded-command MAX_BYTES COMMAND [ARG...]
+
+A QML Process/StdioCollector parses everything the child emits, so an
+occasionally chatty producer (a verbose tool, a firehose mode, a driver
+spewing past its parser) can outrun the collector long before any
+parser-level cap helps. This helper is the producer-side bound: it runs
+COMMAND itself and consumes all of its stdout in bounded os.read chunks
+into a bytearray, requesting at most MAX_BYTES + 1 bytes in total —
+memory tracks the budget, never the producer.
+
+Rules:
+  * stdout is buffered up to MAX_BYTES plus one sentinel byte used only
+    to detect overflow, and written out only after the child exits 0;
+    every other outcome emits no stdout at all;
+  * the child's stderr is discarded (DEVNULL) — never forwarded and never
+    able to block the child;
+  * producing more than MAX_BYTES bytes kills the producer process group
+    (the child starts a new session; descendants that stay in its group
+    are killed with it), then a single short diagnostic is emitted on
+    stderr and the wrapper exits 74 — no partial stdout;
+  * wrapper SIGINT/SIGTERM kills and reaps the owned producer group before
+    the wrapper dies, so a cancelled collection never leaks that producer.
+
+Exit codes:
+  0    child exited 0 and its stdout fit within MAX_BYTES (forwarded)
+  74   child stdout exceeded MAX_BYTES (child group killed)
+  64   invalid arguments (MAX_BYTES not an integer in 1..8388608, or no
+       command given)
+  70   internal error (spawn/read/write failure)
+  126  command exists but cannot be executed
+  127  command not found
+  N    child exited with code N (nothing forwarded)
+  128+N  child died of signal N (a SIGINT/SIGTERM-cancelled wrapper
+       likewise exits 128 + signal)
+
+argv-only invocation: COMMAND and its arguments are handed to execve
+verbatim (shell=False, stdout=PIPE, stderr=DEVNULL,
+start_new_session=True) — no shell ever interprets them. Standard
+library only; nothing is downloaded, compiled, or written to disk (the
+helper only ever runs as a script, so it creates no bytecode either).
+"""
+
+import os
+import signal
+import subprocess
+import sys
+import time
+
+EXIT_ARGS = 64
+EXIT_INTERNAL = 70
+EXIT_OVERFLOW = 74
+EXIT_CANNOT_EXEC = 126
+EXIT_NOT_FOUND = 127
+
+HARD_CAP = 8 * 1024 * 1024  # 8 MiB — largest accepted MAX_BYTES
+CAP_DIGITS_MAX = 16         # longest accepted MAX_BYTES spelling
+READ_CHUNK = 65536          # bytes requested per os.read
+DIAGNOSTIC_MAX = 48         # cap on any untrusted token in a message
+HANDLED_SIGNALS = {signal.SIGINT, signal.SIGTERM}
+
+_child = None
+
+
+def die(code, message):
+    """Emit the prefixed, single-line diagnostic and exit with `code`."""
+    sys.stderr.write("bounded-command: %s\n" % message)
+    sys.stderr.flush()
+    sys.exit(code)
+
+
+def preview(text, width=DIAGNOSTIC_MAX):
+    """Clamp an untrusted token so every diagnostic stays short."""
+    if len(text) <= width:
+        return text
+    return text[:width] + "..."
+
+def kill_group(proc):
+    """SIGKILL the producer process group. The child leads its own session,
+    so its pid doubles as the pgid; descendants remain covered unless they
+    explicitly leave that group. A group that is already empty is not an
+    error."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except OSError:
+        try:
+            proc.kill()  # group vanished; the child itself may not have
+        except OSError:
+            pass
+
+
+def reap_owned_child(proc):
+    """Atomically reap `proc` and clear ownership.
+
+    Signals stay responsive while the producer runs. Each nonblocking
+    `poll()` is performed with SIGINT/SIGTERM masked; if it reaps the child,
+    `_child` is cleared before pending cancellation can run. This closes the
+    waitpid-to-returncode window without blocking cancellation behind a
+    producer's full deadline.
+    """
+    global _child
+    while True:
+        previous_mask = signal.pthread_sigmask(
+            signal.SIG_BLOCK, HANDLED_SIGNALS)
+        try:
+            code = proc.poll()
+            if code is not None:
+                if _child is proc:
+                    _child = None
+                return 128 - code if code < 0 else code
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        time.sleep(0.01)
+
+
+def _on_signal(signum, _frame):
+    """Cancel only a currently owned, unreaped producer group."""
+    global _child
+    signal.pthread_sigmask(signal.SIG_BLOCK, HANDLED_SIGNALS)
+    owned = _child
+    if owned is not None and owned.returncode is None:
+        kill_group(owned)
+        try:
+            owned.wait()
+        except OSError:
+            pass
+    _child = None
+    os._exit(128 + signum)
+
+
+def main(argv):
+    if len(argv) < 3:
+        die(EXIT_ARGS, "usage: bounded-command MAX_BYTES COMMAND [ARG...]")
+
+    # MAX_BYTES: ASCII decimal digits only, then a range check against
+    # the hard cap. Signs, whitespace, and injection-shaped spellings
+    # are refused before anything is spawned.
+    cap_text = argv[1]
+    if not (cap_text.isascii() and cap_text.isdigit()):
+        die(EXIT_ARGS, "MAX_BYTES must be an integer in 1..%d, got '%s'"
+            % (HARD_CAP, preview(cap_text)))
+    if len(cap_text) > CAP_DIGITS_MAX or not 1 <= int(cap_text) <= HARD_CAP:
+        die(EXIT_ARGS, "MAX_BYTES out of range (1..%d): %s"
+            % (HARD_CAP, preview(cap_text)))
+    cap = int(cap_text)
+
+    # Block cancellation across spawn + publication of `_child`. Without
+    # this narrow critical section, SIGTERM could land after Popen returned
+    # but before the handler could see the child, leaving a producer behind.
+    global _child
+    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, HANDLED_SIGNALS)
+    try:
+        command = argv[2:]
+        try:
+            proc = subprocess.Popen(
+                command,
+                shell=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True)
+        except FileNotFoundError:
+            die(EXIT_NOT_FOUND, "command not found: %s" % preview(command[0]))
+        except PermissionError:
+            die(EXIT_CANNOT_EXEC, "cannot execute: %s" % preview(command[0]))
+        except OSError as err:
+            die(EXIT_INTERNAL, "could not start %s: %s"
+                % (preview(command[0]), err.__class__.__name__))
+        _child = proc
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+
+    # Drain the child's stdout in bounded chunks; at most cap + 1 bytes
+    # are ever requested, so the buffer can only prove a breach, never
+    # grow with one.
+    buf = bytearray()
+    try:
+        remaining = cap + 1
+        while remaining > 0:
+            chunk = os.read(proc.stdout.fileno(), min(remaining, READ_CHUNK))
+            if not chunk:
+                break
+            buf += chunk
+            remaining -= len(chunk)
+    except OSError as err:
+        kill_group(proc)
+        reap_owned_child(proc)  # outcome no longer matters
+        die(EXIT_INTERNAL, "could not read child stdout: %s"
+            % (err.strerror or err.__class__.__name__))
+
+    if len(buf) > cap:
+        # One byte past the budget: the child has already overrun. Kill
+        # its group now — without waiting for more output — and never
+        # forward any of the buffered bytes.
+        kill_group(proc)
+        reap_owned_child(proc)  # outcome no longer matters
+        die(EXIT_OVERFLOW, "output exceeded %d bytes; child killed" % cap)
+
+    code = reap_owned_child(proc)
+    if code != 0:
+        return code  # buffered stdout stays suppressed
+
+    try:
+        sys.stdout.buffer.write(buf)
+        sys.stdout.buffer.flush()
+    except OSError as err:
+        die(EXIT_INTERNAL, "could not write stdout: %s"
+            % (err.strerror or err.__class__.__name__))
+    return 0
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGINT, _on_signal)
+    signal.signal(signal.SIGTERM, _on_signal)
+    try:
+        sys.exit(main(sys.argv))
+    except Exception as err:  # a bug must still honor the prefixed contract
+        owned = _child
+        if owned is not None:
+            if owned.returncode is None:
+                kill_group(owned)
+            try:
+                reap_owned_child(owned)
+            except OSError:
+                pass
+        die(EXIT_INTERNAL, "internal error: %s" % err.__class__.__name__)

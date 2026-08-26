@@ -23,7 +23,7 @@ Manager window — with race-free, identity-verified process termination.
 | Task Manager | A large standalone window (1100×720) with the same table and full keyboard navigation. Reopening focuses the existing window instead of stacking a second one. |
 | System Info | Hardware inventory from unprivileged sources: processor topology, memory and swap, motherboard/BIOS, OS and kernel, and display adapters. |
 | Settings | Per-bar chip configuration with live preview — pick the chip style and exactly which monitors it shows. |
-| Safety | Monitoring probes and process termination use argv-only execution. *End Process* sends SIGTERM only after the target's identity is re-verified through a kernel pidfd — a reused PID can never be signalled. |
+| Safety | Monitoring probes and process termination use argv-only execution, and every probe's output is capped at the producer before it reaches the shell. *End Process* sends SIGTERM only after the target's identity is re-verified through a kernel pidfd — a reused PID can never be signalled. |
 
 ## Requirements
 
@@ -143,6 +143,10 @@ the signal:
    re-derives the birth time from kernel truth (`/proc/PID/stat` field 22 +
    `/proc/stat` btime) and compares it with the token captured at selection.
    Only an exact match is signalled, through the pidfd.
+5. **Probe output is bounded at the producer.** Every external monitoring
+   command runs through `bin/bounded-command`, which caps the complete
+   output before any QML collector starts buffering — memory safety never
+   rests on parser-side limits alone.
 
 The helper reports honestly: exit 0 means the confirmed process was signalled;
 exit 3 (vanished) or 4 (identity mismatch — the PID now names a different
@@ -150,6 +154,39 @@ process) clears the selection and asks you to confirm again. An identity
 failure is never reported as success. The helper also takes argv only and
 rejects any argument beginning with `-`, so it cannot be turned into an option
 injection.
+
+### Bounded probe output
+
+`bin/bounded-command` is a second source-only helper built the same way as
+the pidfd script: plain standard-library Python behind a
+`#!/usr/bin/python3` shebang, with no shell, temporary files, build step,
+or dependency — nothing to compile or install, and the source at the
+installed path is exactly what runs. Every external monitoring probe is
+launched through it, wrapping the complete producer argv (`shell=False`)
+so the bound is enforced on the producer side, before a QML
+`StdioCollector` ever begins buffering:
+
+- **Bounded buffering.** The wrapper buffers up to the probe's configured
+  cap plus one sentinel byte used only to detect overflow — never more than
+  the hard 8 MiB maximum plus that sentinel — so a runaway producer cannot
+  grow plugin memory without limit.
+- **Success-only delivery.** The bounded output is handed to QML only when
+  the producer exits 0; a failed probe delivers nothing.
+- **Overflow kills the producer group.** A producer that exceeds its cap
+  is killed together with descendants that remain in its process group,
+  and the wrapper emits only a fixed, size-limited diagnostic — never the
+  partial data.
+- **Fixed stderr.** The producer's stderr is discarded, so diagnostics can
+  never become an unbounded second channel.
+
+Caps match the largest sane output per probe: the process table is capped
+at 2 MiB, `sensors` and `lspci` at 1 MiB each, and the smaller fixed
+probes (stats, disk, GPU, kernel) at 4–64 KiB. The QML parsers keep their
+existing semantics unchanged; the memory bound comes from the wrapper, not
+from parser-side limits.
+Every producer also has a wall-clock deadline with `timeout --kill-after`,
+so a command that ignores the initial termination signal is forcibly stopped.
+
 
 ## The pidfd helper
 
@@ -176,6 +213,7 @@ SystemTaskManagerWindow.qml standalone task manager window
 SystemMonitorModel.js       shared pure model (runs in QML and Node)
 SystemMonitorTheme.qml      palette adapter for the active omarchy theme
 bin/pidfd-signal            termination helper (standard-library Python)
+bin/bounded-command         producer-side output cap for every probe (standard-library Python)
 tests/                      Node, Qt, and runtime smoke tests
 ```
 

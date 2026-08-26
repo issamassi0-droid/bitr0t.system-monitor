@@ -36,10 +36,16 @@ BarWidget {
   property var knownSensorReadingsById: ({})
   property bool sensorsStale: false
   property string pendingSensorsOutput: ""
+  property bool sensorStreamFinished: false
+  property bool sensorProcessExited: false
+  property int sensorExitCode: -1
+  readonly property bool sensorTransactionPending:
+    sensorStreamFinished || sensorProcessExited
   property bool chipSettingsDirty: false
   property string stagedChipMode: "instrument"
   property var stagedChipMonitors: []
 
+  readonly property string boundedCommandPath: MonitorModel.localFilePath(Qt.resolvedUrl("bin/bounded-command"))
   readonly property string chipMode: chipSettingsDirty
     ? stagedChipMode
     : MonitorModel.normalizeChipMode(settings ? settings.chipMode : undefined)
@@ -326,14 +332,33 @@ BarWidget {
     sensorsStale = true
   }
 
-  function applySensorsSample(exitCode) {
-    var output = pendingSensorsOutput
-    pendingSensorsOutput = ""
+  function applySensorsSample(exitCode, output) {
     if (exitCode !== 0) {
       markSensorsStale()
       return
     }
     updateSensors(output)
+  }
+
+  function finishSensorsIfReady() {
+    if (!sensorStreamFinished || !sensorProcessExited) return
+    var output = pendingSensorsOutput
+    var exitCode = sensorExitCode
+    pendingSensorsOutput = ""
+    sensorStreamFinished = false
+    sensorProcessExited = false
+    sensorExitCode = -1
+    applySensorsSample(exitCode, output)
+  }
+
+  function startSensorsProbe() {
+    if (!sensorPollingActive || sensorsProcess.running || sensorTransactionPending)
+      return
+    pendingSensorsOutput = ""
+    sensorStreamFinished = false
+    sensorProcessExited = false
+    sensorExitCode = -1
+    sensorsProcess.running = true
   }
 
   function updateSensors(output) {
@@ -1050,16 +1075,26 @@ BarWidget {
   Process {
     id: sensorsProcess
     running: false
-    command: ["timeout", "3", "sensors", "-j"]
+    command: MonitorModel.buildBoundedCommand(
+      boundedCommandPath,
+      MonitorModel.commandOutputLimit("sensors"),
+      ["timeout", "--kill-after=1", "3", "sensors", "-j"]
+    )
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.pendingSensorsOutput = text
+      onStreamFinished: {
+        root.pendingSensorsOutput = String(text || "")
+        root.sensorStreamFinished = true
+        root.finishSensorsIfReady()
+      }
     }
     stderr: StdioCollector {
       waitForEnd: true
     }
     onExited: function (exitCode, exitStatus) {
-      root.applySensorsSample(exitCode)
+      root.sensorExitCode = exitCode
+      root.sensorProcessExited = true
+      root.finishSensorsIfReady()
     }
   }
 
@@ -1068,24 +1103,28 @@ BarWidget {
     running: root.sensorPollingActive
     repeat: true
     triggeredOnStart: true
-    onTriggered: {
-      if (root.sensorPollingActive && !sensorsProcess.running)
-        sensorsProcess.running = true
-    }
+    onTriggered: root.startSensorsProbe()
   }
 
   Process {
     id: statsProcess
     running: false
-    command: [
-      "awk",
-      "FILENAME == \"/proc/stat\" && FNR == 1 { total = $2 + $3 + $4 + $5 + $6 + $7 + $8 + $9; idle = $5 + $6 } FILENAME == \"/proc/meminfo\" { if ($1 == \"MemTotal:\") memoryTotal = $2; if ($1 == \"MemAvailable:\") memoryAvailable = $2 } FILENAME == \"/proc/net/dev\" && $1 ~ /:$/ && $1 != \"lo:\" { received += $2; transmitted += $10 } FILENAME == \"/proc/loadavg\" { loadOne = $1; loadFive = $2; loadFifteen = $3 } FILENAME == \"/proc/uptime\" { uptime = $1 } END { print total, idle, memoryTotal, memoryAvailable, received, transmitted, loadOne, loadFive, loadFifteen, uptime }",
-      "/proc/stat",
-      "/proc/meminfo",
-      "/proc/net/dev",
-      "/proc/loadavg",
-      "/proc/uptime"
-    ]
+    command: MonitorModel.buildBoundedCommand(
+      boundedCommandPath,
+      MonitorModel.commandOutputLimit("stats"),
+      [
+        "timeout",
+        "--kill-after=1",
+        "3",
+        "awk",
+        "FILENAME == \"/proc/stat\" && FNR == 1 { total = $2 + $3 + $4 + $5 + $6 + $7 + $8 + $9; idle = $5 + $6 } FILENAME == \"/proc/meminfo\" { if ($1 == \"MemTotal:\") memoryTotal = $2; if ($1 == \"MemAvailable:\") memoryAvailable = $2 } FILENAME == \"/proc/net/dev\" && $1 ~ /:$/ && $1 != \"lo:\" { received += $2; transmitted += $10 } FILENAME == \"/proc/loadavg\" { loadOne = $1; loadFive = $2; loadFifteen = $3 } FILENAME == \"/proc/uptime\" { uptime = $1 } END { print total, idle, memoryTotal, memoryAvailable, received, transmitted, loadOne, loadFive, loadFifteen, uptime }",
+        "/proc/stat",
+        "/proc/meminfo",
+        "/proc/net/dev",
+        "/proc/loadavg",
+        "/proc/uptime"
+      ]
+    )
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.updateStats(text)
