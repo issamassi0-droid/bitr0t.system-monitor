@@ -89,15 +89,6 @@ BarWidget {
   implicitWidth: chevronGap + button.implicitWidth + systemIconGap
   implicitHeight: button.implicitHeight
 
-  Behavior on cpuUsage { NumberAnimation { duration: monitorTheme.animationDuration; easing.type: Easing.OutCubic } }
-  Behavior on memoryUsage { NumberAnimation { duration: monitorTheme.animationDuration; easing.type: Easing.OutCubic } }
-  Behavior on receiveRate { NumberAnimation { duration: monitorTheme.animationDuration; easing.type: Easing.OutCubic } }
-  Behavior on transmitRate { NumberAnimation { duration: monitorTheme.animationDuration; easing.type: Easing.OutCubic } }
-  Behavior on loadOne { NumberAnimation { duration: monitorTheme.animationDuration; easing.type: Easing.OutCubic } }
-  Behavior on loadFive { NumberAnimation { duration: monitorTheme.animationDuration; easing.type: Easing.OutCubic } }
-  Behavior on loadFifteen { NumberAnimation { duration: monitorTheme.animationDuration; easing.type: Easing.OutCubic } }
-  Behavior on uptimeSeconds { NumberAnimation { duration: monitorTheme.animationDuration; easing.type: Easing.OutCubic } }
-
   function dim(color, opacity) {
     return Qt.rgba(color.r, color.g, color.b, opacity)
   }

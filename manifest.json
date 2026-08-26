@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "bitr0t.system-monitor",
   "name": "System Monitor",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "author": "Ryan Macy",
   "license": "MIT",
   "description": "Live CPU, memory, network, load, uptime, and sensor chip with a system monitor panel, process list, and standalone Task Manager window.",

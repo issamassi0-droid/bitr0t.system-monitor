@@ -56,6 +56,8 @@ omarchy plugin remove bitr0t.system-monitor   # uninstall
 - **Right-click** — open the Task Manager window
 
 Hovering the chip shows current CPU, memory, and network rates.
+Telemetry text updates atomically once per completed sample; visual theme
+transitions never interpolate the underlying numeric readings.
 
 ### The panel
 

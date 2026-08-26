@@ -286,6 +286,26 @@ ShellRoot {
     check(widget.boundedCommandPath.indexOf("/bin/bounded-command") > 0,
       "bar probes did not resolve the bounded producer")
 
+    // Telemetry is sampled state, not an animation target. A new sample must
+    // become readable atomically; interpolating the numbers makes text count
+    // through intermediate values and forces repeated bar repaints.
+    widget.cpuUsage = 11
+    widget.cpuUsage = 89
+    widget.memoryUsage = 22
+    widget.memoryUsage = 73
+    widget.receiveRate = 1
+    widget.receiveRate = 8192
+    widget.loadOne = 0.25
+    widget.loadOne = 2.5
+    widget.uptimeSeconds = 60
+    widget.uptimeSeconds = 86400
+    check(widget.cpuUsage === 89
+      && widget.memoryUsage === 73
+      && widget.receiveRate === 8192
+      && widget.loadOne === 2.5
+      && widget.uptimeSeconds === 86400,
+      "bar telemetry values did not update atomically")
+
     var firstOutput = "{\"k10temp-pci-00c3\":{\"Adapter\":\"PCI adapter\","
       + "\"Tctl\":{\"temp1_input\":42,\"temp1_max\":90,\"temp1_crit\":100}}}"
 
