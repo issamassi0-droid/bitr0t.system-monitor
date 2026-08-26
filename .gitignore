@@ -22,5 +22,9 @@ desktop.ini
 build/
 dist/
 
+# Python bytecode
+__pycache__/
+*.py[cod]
+
 # Node (only if running the model tests locally)
 node_modules/

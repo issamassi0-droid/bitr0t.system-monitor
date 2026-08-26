@@ -28,8 +28,9 @@ Manager window — with race-free, identity-verified process termination.
 ## Requirements
 
 - [Omarchy](https://omarchy.org) (Hyprland + the omarchy-shell Quickshell environment)
-- Linux 5.3 or newer (for `pidfd_open`, used by the *End Process* helper)
-- x86_64 for the bundled prebuilt helper — other architectures: rebuild it from source (see [The native helper](#the-native-helper)); everything else is architecture-independent QML/JS
+- Linux 5.3 or newer and system Python 3.9 or newer for the *End Process*
+  pidfd APIs — both already present on an Omarchy install; the plugin is
+  fully architecture-independent
 
 ## Installation
 
@@ -136,9 +137,9 @@ the signal:
 4. **Identity is re-verified at signal time.** The residual race in
    validate-then-kill designs is the gap between reading a PID's identity and
    signalling it: the process can exit and its PID be handed to a different
-   program. The bundled `pidfd-signal` helper closes that gap — it pins the
-   process with a **pidfd** first, from which moment the kernel guarantees the
-   descriptor refers to exactly one process and no reuse can swap it; it then
+   program. The `pidfd-signal` helper closes that gap by pinning the process
+   with a **pidfd** first. From that moment, the descriptor refers to exactly
+   one process and no reuse can swap it; it then
    re-derives the birth time from kernel truth (`/proc/PID/stat` field 22 +
    `/proc/stat` btime) and compares it with the token captured at selection.
    Only an exact match is signalled, through the pidfd.
@@ -150,19 +151,16 @@ failure is never reported as success. The helper also takes argv only and
 rejects any argument beginning with `-`, so it cannot be turned into an option
 injection.
 
-## The native helper
+## The pidfd helper
 
-`bin/pidfd-signal` is a small C helper, committed prebuilt for Omarchy's
-x86_64 Linux target. It calls the raw `pidfd_open` / `pidfd_send_signal`
-syscalls (kernel 5.3+) and links against nothing beyond libc. Its source ships
-in the repository; rebuild it with:
-
-```sh
-cc -std=c11 -O2 -Wall -Wextra -o bin/pidfd-signal native/pidfd-signal.c
-```
-
-On a non-x86_64 machine, rebuild the helper from source — every other file in
-the plugin is architecture-independent QML/JavaScript.
+`bin/pidfd-signal` is a small script written against the Python standard
+library alone and executed directly through its `#!/usr/bin/python3`
+shebang — nothing to compile, build, or install, and nothing pulled in from
+pip or a virtualenv. It pins the target with `os.pidfd_open` (Python 3.9+;
+the `pidfd_open` syscall requires Linux 5.3+) and sends `SIGTERM` through
+that same descriptor, so the identity guarantees above are unchanged. As
+plain Python it is architecture-independent, and the source you see at the
+installed path is exactly what runs.
 
 ### Repository layout
 
@@ -177,8 +175,7 @@ SystemMonitorSettingsView.qml  chip settings page
 SystemTaskManagerWindow.qml standalone task manager window
 SystemMonitorModel.js       shared pure model (runs in QML and Node)
 SystemMonitorTheme.qml      palette adapter for the active omarchy theme
-bin/pidfd-signal            prebuilt termination helper (x86_64)
-native/pidfd-signal.c       helper source
+bin/pidfd-signal            termination helper (standard-library Python)
 tests/                      Node, Qt, and runtime smoke tests
 ```
 
