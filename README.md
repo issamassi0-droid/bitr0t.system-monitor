@@ -1,0 +1,224 @@
+# Omarchy System Monitor
+
+A live system monitor for the [Omarchy](https://omarchy.org) shell: a configurable
+resource chip in your bar, a three-tab overview panel, and a standalone Task
+Manager window — with race-free, identity-verified process termination.
+
+| Panel — Performance | Panel — Processes |
+|:---:|:---:|
+| ![Performance tab](screenshots/overview.png) | ![Processes tab](screenshots/processes.png) |
+
+| Panel — System Info | Task Manager window |
+|:---:|:---:|
+| ![System Info tab](screenshots/system-info.png) | ![Task Manager window](screenshots/task-manager.png) |
+
+## Features
+
+| Area | What you get |
+|---|---|
+| Bar chip | CPU, memory, network, load, and uptime at a glance — plus any temperature or fan sensor you pin to it. Two styles: animated instrument gauges or compact minimal text. |
+| Panel | Click the chip for a popover with **Performance**, **Processes**, and **System Info** tabs. |
+| Performance | Live CPU/memory history graphs, a dual-direction network graph, load averages, uptime, root-disk usage, and (on NVIDIA) GPU utilization, VRAM, and temperature. Sensor cards for every monitor pinned to the chip. |
+| Processes | A live, searchable, sortable table of your own processes — filter as you type, sort by CPU, memory, or name. |
+| Task Manager | A large standalone window (1100×720) with the same table and full keyboard navigation. Reopening focuses the existing window instead of stacking a second one. |
+| System Info | Hardware inventory from unprivileged sources: processor topology, memory and swap, motherboard/BIOS, OS and kernel, and display adapters. |
+| Settings | Per-bar chip configuration with live preview — pick the chip style and exactly which monitors it shows. |
+| Safety | Monitoring probes and process termination use argv-only execution. *End Process* sends SIGTERM only after the target's identity is re-verified through a kernel pidfd — a reused PID can never be signalled. |
+
+## Requirements
+
+- [Omarchy](https://omarchy.org) (Hyprland + the omarchy-shell Quickshell environment)
+- Linux 5.3 or newer (for `pidfd_open`, used by the *End Process* helper)
+- x86_64 for the bundled prebuilt helper — other architectures: rebuild it from source (see [The native helper](#the-native-helper)); everything else is architecture-independent QML/JS
+
+## Installation
+
+```sh
+omarchy plugin add https://github.com/rmacy/omarchy-system-monitor --enable
+```
+
+The plugin appears as the **System Monitor** chip on the right side of your bar.
+
+### Updating and removal
+
+```sh
+omarchy plugin update bitr0t.system-monitor   # pull the latest revision
+omarchy plugin remove bitr0t.system-monitor   # uninstall
+```
+
+## Using it
+
+### The bar chip
+
+- **Left-click** — open the System Monitor panel
+- **Middle-click** — launch (or focus) `btop` in a terminal
+- **Right-click** — open the Task Manager window
+
+Hovering the chip shows current CPU, memory, and network rates.
+
+### The panel
+
+The panel has three tabs, cycled with <kbd>Ctrl+Tab</kbd> / <kbd>Ctrl+Shift+Tab</kbd>:
+
+- **Performance** — utilization graphs, network traffic, load, uptime, disk, GPU, and your pinned sensor cards.
+- **Processes** — your processes, refreshed every 2 s while the tab is visible. Type to filter, click a column header to sort, select a row and press *End Process*. The footer can hand off to `btop` or open the full Task Manager.
+- **System Info** — the hardware inventory described above, with a refresh button.
+
+The gear button in the panel header opens chip settings.
+
+### The Task Manager
+
+Right-click the chip, choose *Open full view* from the Processes tab, or bind it
+globally in your Hyprland config:
+
+```ini
+bind = CTRL SHIFT, ESCAPE, exec, omarchy-shell bitr0t.system-monitor taskManager
+```
+
+That gives you a Windows-style <kbd>Ctrl+Shift+Esc</kbd> task manager that opens
+— or focuses — the window from anywhere.
+
+### Chip settings
+
+Open with the gear in the panel header. Changes apply immediately and are saved
+when the panel closes.
+
+**Chip style**
+
+| Style | Look |
+|---|---|
+| Instrument (default) | Color-coded gauges with sparkline motion — CPU/memory fill, a live traffic graph, threshold-aware sensor colors |
+| Minimal | Compact monochrome text (`CPU 42%  MEM 61%  NET ↓1.2M ↑96K`) |
+
+**Monitors**
+
+| Monitor | Shows |
+|---|---|
+| CPU | Utilization percentage + sparkline |
+| Memory | Used percentage + sparkline |
+| Network | Download/upload rates + traffic graph |
+| Load | 1-minute load average |
+| Uptime | Compact time since boot (`2d 5h`) |
+| Temperature / Fan sensors | Any reading from `sensors -j` — e.g. CPU `Tctl` or a pump fan — pinned to the chip; temperatures turn warning/critical at the thresholds lm-sensors reports |
+
+Sensor monitors survive hotplug churn: a docked sensor keeps its selection and
+label while temporarily absent, and turns itself off when you remove it.
+
+## Optional dependencies
+
+Core readings (CPU, memory, network, load, uptime, process list, hardware
+inventory) use only `/proc`, `ps`, `awk`, `df`, and `uname` — all present on an
+Omarchy install. Everything else degrades gracefully when its command is
+missing:
+
+| Arch package | Command | Unlocks |
+|---|---|---|
+| `lm-sensors` | `sensors` | Temperature and fan monitors (chip + performance sensor cards) |
+| `btop` | `btop` | Middle-click terminal monitor |
+| `nvidia-utils` | `nvidia-smi` | GPU utilization/VRAM/temperature readouts and NVIDIA details on System Info (other GPUs still appear via the PCI inventory) |
+| `pciutils` | `lspci` | Display-adapter inventory on the System Info tab |
+
+## Ending processes safely
+
+*End Process* is built so the process you confirmed is the process that gets
+the signal:
+
+1. **No shell in the data path.** Monitoring probes — `ps`, `sensors`, `df`,
+   `nvidia-smi` — and the termination helper are launched as argv lists.
+   Nothing typed into the search box can reach a shell. The separate `btop`
+   shortcut passes one fixed command to Omarchy's host launcher.
+2. **Your processes only.** The list runs `ps` for your own user; the helper
+   sends `SIGTERM` (graceful termination), not `SIGKILL`.
+3. **Selections carry identity.** Each row captures the process's `lstart`
+   birth token. Every refresh reconciles your selection against PID *and*
+   token, so an exited process — or a reused PID — can never remain the kill
+   target.
+4. **Identity is re-verified at signal time.** The residual race in
+   validate-then-kill designs is the gap between reading a PID's identity and
+   signalling it: the process can exit and its PID be handed to a different
+   program. The bundled `pidfd-signal` helper closes that gap — it pins the
+   process with a **pidfd** first, from which moment the kernel guarantees the
+   descriptor refers to exactly one process and no reuse can swap it; it then
+   re-derives the birth time from kernel truth (`/proc/PID/stat` field 22 +
+   `/proc/stat` btime) and compares it with the token captured at selection.
+   Only an exact match is signalled, through the pidfd.
+
+The helper reports honestly: exit 0 means the confirmed process was signalled;
+exit 3 (vanished) or 4 (identity mismatch — the PID now names a different
+process) clears the selection and asks you to confirm again. An identity
+failure is never reported as success. The helper also takes argv only and
+rejects any argument beginning with `-`, so it cannot be turned into an option
+injection.
+
+## The native helper
+
+`bin/pidfd-signal` is a small C helper, committed prebuilt for Omarchy's
+x86_64 Linux target. It calls the raw `pidfd_open` / `pidfd_send_signal`
+syscalls (kernel 5.3+) and links against nothing beyond libc. Its source ships
+in the repository; rebuild it with:
+
+```sh
+cc -std=c11 -O2 -Wall -Wextra -o bin/pidfd-signal native/pidfd-signal.c
+```
+
+On a non-x86_64 machine, rebuild the helper from source — every other file in
+the plugin is architecture-independent QML/JavaScript.
+
+### Repository layout
+
+```
+manifest.json               plugin manifest (id, version, settings schema)
+BarWidget.qml               bar chip: sampling, sensors, panel + window hosting
+SystemMonitorPanel.qml      three-tab popover panel
+SystemPerformanceView.qml   performance tab
+SystemProcessView.qml       process list + End Process flow
+SystemInfoView.qml          hardware inventory tab
+SystemMonitorSettingsView.qml  chip settings page
+SystemTaskManagerWindow.qml standalone task manager window
+SystemMonitorModel.js       shared pure model (runs in QML and Node)
+SystemMonitorTheme.qml      palette adapter for the active omarchy theme
+bin/pidfd-signal            prebuilt termination helper (x86_64)
+native/pidfd-signal.c       helper source
+tests/                      Node, Qt, and runtime smoke tests
+```
+
+## Development
+
+The shared model (`SystemMonitorModel.js`) is deliberately dual-mode: the same
+file runs under the Qt QML engine and Node, so all parsing, formatting, and
+chip-settings logic is testable without a running shell.
+
+```sh
+# Pure-model unit tests + pidfd integration test (spawns real child processes)
+node --test tests/*.test.js
+
+# The same model exercised under the Qt V4 engine the shell uses
+/usr/lib/qt6/bin/qmltestrunner -input tests
+
+# Production QML smoke: instantiates the real views through quickshell
+tests/run-runtime-smoke
+```
+
+What each checks:
+
+- **`node --test tests/*.test.js`** — `SystemMonitorModel.test.js` covers every parser
+  and formatter (stats, ps, sensors JSON, df, nvidia-smi, cpuinfo, meminfo,
+  os-release, lspci, uname) plus chip-settings normalization; the suite exits
+  nonzero on any assertion failure. `PidfdSignal.test.js` proves the race-free
+  contract end to end against real child processes: a wrong identity token
+  leaves the child untouched (exit 4), the token real `ps -o lstart=` reports
+  terminates it via SIGTERM (exit 0), and garbage arguments or vanished PIDs
+  fail without signalling (exits 2 and 3).
+- **`qmltestrunner`** — `tst_SystemMonitorModel.qml` re-runs the model
+  contract under the QML engine, proving the file parses and executes outside
+  Node with identical behavior.
+- **`tests/run-runtime-smoke`** — assembles a throwaway Quickshell config
+  linking this plugin and `/usr/share/omarchy/shell`, then runs the production
+  views (inactive: nothing opened, no probes, no kills) through the real
+  `quickshell` binary. It prints `runtime smoke: PASS` only when the
+  `SYSTEM_MONITOR_RUNTIME_SMOKE_PASS` marker appears in the log — any QML
+  error or missing required property fails the script.
+
+## License
+
+[MIT](LICENSE) © 2026 Ryan Macy

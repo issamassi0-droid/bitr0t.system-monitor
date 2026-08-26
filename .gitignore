@@ -1,0 +1,26 @@
+# Editors & IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files & logs
+*.log
+*.tmp
+*.bak
+
+# Local build artifacts
+# (bin/pidfd-signal and screenshots/ are intentionally committed — nothing
+# here ignores them; these patterns cover stray rebuild output and scratch dirs)
+*.o
+build/
+dist/
+
+# Node (only if running the model tests locally)
+node_modules/

@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "id": "bitr0t.system-monitor",
+  "name": "System Monitor",
+  "version": "1.1.0",
+  "author": "Ryan Macy",
+  "license": "MIT",
+  "description": "Live CPU, memory, network, load, uptime, and sensor chip with a system monitor panel, process list, and standalone Task Manager window.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "System Monitor",
+    "description": "Live resource chip with a three-tab panel (performance, processes, system info), sensor monitors, and a Task Manager window.",
+    "category": "System",
+    "aliases": ["system-monitor", "system-stats", "task-manager"],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "chipMode": "instrument",
+      "monitors": ["cpu", "memory", "network"]
+    },
+    "schema": [
+      {
+        "key": "chipMode",
+        "type": "enum",
+        "label": "Chip mode",
+        "description": "Bar chip presentation: instrument gauges or minimal text.",
+        "options": ["instrument", "minimal"],
+        "defaultValue": "instrument"
+      }
+    ]
+  }
+}

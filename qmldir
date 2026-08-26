@@ -1,0 +1,10 @@
+module bitr0t.SystemMonitor
+
+SystemMonitorTheme 1.0 SystemMonitorTheme.qml
+SystemPerformanceView 1.0 SystemPerformanceView.qml
+SystemProcessView 1.0 SystemProcessView.qml
+SystemInfoView 1.0 SystemInfoView.qml
+SystemMonitorSettingsView 1.0 SystemMonitorSettingsView.qml
+SystemMonitorPanel 1.0 SystemMonitorPanel.qml
+SystemTaskManagerWindow 1.0 SystemTaskManagerWindow.qml
+BarWidget 1.0 BarWidget.qml

@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Runtime smoke for the bitr0t.system-monitor plugin.
+#
+# Assembles a throwaway Quickshell config that links the packaged plugin and
+# /usr/share/omarchy/shell/{Ui,Commons}, then runs tests/runtime/shell.qml
+# through the real quickshell binary. The harness instantiates the production
+# views inactive (fake bar/host, nothing opened or focused, no probes, no
+# kills) and prints SYSTEM_MONITOR_RUNTIME_SMOKE_PASS only when every binding
+# and public API holds. Any QML error, missing required property, or failed
+# check leaves the marker out of the log, which fails this script.
+
+set -u
+
+plugin_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+shell_qml="$plugin_dir/tests/runtime/shell.qml"
+shell_root=/usr/share/omarchy/shell
+
+if ! command -v quickshell >/dev/null 2>&1; then
+  echo "runtime smoke: quickshell binary not found" >&2
+  exit 1
+fi
+if [ ! -d "$shell_root/Ui" ] || [ ! -d "$shell_root/Commons" ]; then
+  echo "runtime smoke: $shell_root is missing Ui/Commons" >&2
+  exit 1
+fi
+if [ ! -f "$shell_qml" ]; then
+  echo "runtime smoke: missing $shell_qml" >&2
+  exit 1
+fi
+
+tmp=$(mktemp -d) || exit 1
+trap 'rm -rf "$tmp"' EXIT
+
+ln -s "$shell_root/Ui" "$tmp/Ui"
+ln -s "$shell_root/Commons" "$tmp/Commons"
+ln -s "$plugin_dir" "$tmp/plugin"
+ln -s "$shell_qml" "$tmp/shell.qml"
+
+log="$tmp/quickshell.log"
+timeout 3 quickshell -p "$tmp/shell.qml" --no-color >"$log" 2>&1
+status=$?
+
+cat "$log"
+
+if grep -q "SYSTEM_MONITOR_RUNTIME_SMOKE_PASS" "$log" \
+    && { [ "$status" -eq 0 ] || [ "$status" -eq 124 ]; }; then
+  echo "runtime smoke: PASS"
+  exit 0
+fi
+
+if [ "$status" -ne 0 ]; then
+  echo "runtime smoke: quickshell exited with status $status" >&2
+  exit 1
+fi
+
+echo "runtime smoke: SYSTEM_MONITOR_RUNTIME_SMOKE_PASS not found in output (status $status)" >&2
+exit 1
