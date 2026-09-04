@@ -69,8 +69,8 @@ QtObject {
     : Style.font.family
   readonly property color accentColor: flatColorToken("accent", Color.accent)
 
-  readonly property color cpuColor: flatColorToken("cpu", "#61d5f8")
-  readonly property color memoryColor: flatColorToken("memory", "#c7a6ff")
+  readonly property color cpuColor: flatColorToken("cpu", "#f97316")
+  readonly property color memoryColor: flatColorToken("memory", "#eab308")
   readonly property color downloadColor: flatColorToken("download", "#5eead4")
   readonly property color uploadColor: flatColorToken("upload", "#a3e635")
   readonly property color loadColor: flatColorToken("load", "#fbbf24")
@@ -85,7 +85,7 @@ QtObject {
   readonly property color chipBackground: composedColorToken(
     "chip-background", Color.background, chipFallbackAlpha())
   readonly property color chipBorder: composedColorToken(
-    "chip-border", cpuColor, 0.48)
+    "chip-border", cpuColor, 0.35)
   readonly property color cardFill: composedColorToken(
     "card-background", foreground, 0.045)
   readonly property color cardBorder: composedColorToken(

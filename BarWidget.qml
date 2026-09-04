@@ -584,14 +584,14 @@ BarWidget {
   }
 
   component CpuInstrument: Row {
-    spacing: Math.max(1, Math.round(monitorTheme.monitorGap / 2))
+    spacing: Math.max(1, Math.round(monitorTheme.monitorGap * 0.3))
     height: Math.max(monitorTheme.graphHeight, cpuLabel.implicitHeight)
 
     ChipText {
       id: cpuLabel
       anchors.verticalCenter: parent.verticalCenter
       text: "CPU"
-      color: root.dim(monitorTheme.cpuColor, 0.82)
+      color: root.dim(monitorTheme.cpuColor, 0.65)
       font.weight: Font.DemiBold
     }
 
@@ -607,7 +607,7 @@ BarWidget {
     ChipText {
       anchors.verticalCenter: parent.verticalCenter
       text: root.ready ? root.cpuUsage + "%" : "…"
-      color: root.cpuLevelColor(root.cpuUsage)
+      color: root.dim(root.cpuLevelColor(root.cpuUsage), 0.75)
       width: Math.round(monitorTheme.graphWidth * 0.62)
       horizontalAlignment: Text.AlignRight
     }
@@ -621,7 +621,7 @@ BarWidget {
       id: memoryLabel
       anchors.verticalCenter: parent.verticalCenter
       text: "MEM"
-      color: root.dim(monitorTheme.memoryColor, 0.82)
+      color: root.dim(monitorTheme.memoryColor, 0.65)
       font.weight: Font.DemiBold
     }
 
@@ -637,7 +637,7 @@ BarWidget {
     ChipText {
       anchors.verticalCenter: parent.verticalCenter
       text: root.ready ? root.memoryUsage + "%" : "…"
-      color: root.memoryLevelColor(root.memoryUsage)
+      color: root.dim(root.memoryLevelColor(root.memoryUsage), 0.75)
       width: Math.round(monitorTheme.graphWidth * 0.62)
       horizontalAlignment: Text.AlignRight
     }
@@ -809,35 +809,32 @@ BarWidget {
       Row {
         visible: root.monitorEnabled("cpu")
         spacing: monitorTheme.monitorGap
-        ChipDivider { visible: root.monitorPosition("cpu") > 0 }
         CpuInstrument {}
       }
+
+      Item { width: Math.round(monitorTheme.monitorGap * 1.5); height: 1 }
 
       Row {
         visible: root.monitorEnabled("memory")
         spacing: monitorTheme.monitorGap
-        ChipDivider { visible: root.monitorPosition("memory") > 0 }
         MemoryInstrument {}
       }
 
       Row {
         visible: root.monitorEnabled("network")
         spacing: monitorTheme.monitorGap
-        ChipDivider { visible: root.monitorPosition("network") > 0 }
         NetworkInstrument {}
       }
 
       Row {
         visible: root.monitorEnabled("load")
         spacing: monitorTheme.monitorGap
-        ChipDivider { visible: root.monitorPosition("load") > 0 }
         LoadInstrument {}
       }
 
       Row {
         visible: root.monitorEnabled("uptime")
         spacing: monitorTheme.monitorGap
-        ChipDivider { visible: root.monitorPosition("uptime") > 0 }
         UptimeInstrument {}
       }
 
@@ -846,7 +843,6 @@ BarWidget {
         delegate: Row {
           required property string modelData
           spacing: monitorTheme.monitorGap
-          ChipDivider { visible: root.monitorPosition(modelData) > 0 }
           SensorInstrument { monitorId: modelData }
         }
       }
@@ -995,7 +991,8 @@ BarWidget {
     id: button
     anchors.left: parent.left
     anchors.leftMargin: root.chevronGap
-    anchors.verticalCenter: parent.verticalCenter
+    anchors.bottom: parent.bottom
+    anchors.bottomMargin: -2
     width: implicitWidth
     height: implicitHeight
     bar: root.bar
