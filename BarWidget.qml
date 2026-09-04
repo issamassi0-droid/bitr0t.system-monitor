@@ -590,6 +590,7 @@ BarWidget {
     ChipText {
       id: cpuLabel
       anchors.verticalCenter: parent.verticalCenter
+      anchors.verticalCenterOffset: 1
       text: "CPU"
       color: root.dim(monitorTheme.cpuColor, 0.65)
       font.weight: Font.DemiBold
@@ -606,6 +607,7 @@ BarWidget {
 
     ChipText {
       anchors.verticalCenter: parent.verticalCenter
+      anchors.verticalCenterOffset: 1
       text: root.ready ? root.cpuUsage + "%" : "…"
       color: root.dim(root.cpuLevelColor(root.cpuUsage), 0.75)
       width: Math.round(monitorTheme.graphWidth * 0.62)
@@ -620,6 +622,7 @@ BarWidget {
     ChipText {
       id: memoryLabel
       anchors.verticalCenter: parent.verticalCenter
+      anchors.verticalCenterOffset: 1
       text: "MEM"
       color: root.dim(monitorTheme.memoryColor, 0.65)
       font.weight: Font.DemiBold
@@ -636,6 +639,7 @@ BarWidget {
 
     ChipText {
       anchors.verticalCenter: parent.verticalCenter
+      anchors.verticalCenterOffset: 1
       text: root.ready ? root.memoryUsage + "%" : "…"
       color: root.dim(root.memoryLevelColor(root.memoryUsage), 0.75)
       width: Math.round(monitorTheme.graphWidth * 0.62)
@@ -650,6 +654,7 @@ BarWidget {
     ChipText {
       id: networkLabel
       anchors.verticalCenter: parent.verticalCenter
+      anchors.verticalCenterOffset: 1
       text: "NET"
       color: root.dim(monitorTheme.downloadColor, 0.82)
       font.weight: Font.DemiBold
@@ -668,6 +673,7 @@ BarWidget {
 
     Column {
       anchors.verticalCenter: parent.verticalCenter
+      anchors.verticalCenterOffset: 1
       spacing: -Math.max(1, Math.round(monitorTheme.monitorGap / 4))
 
       ChipText {
@@ -695,6 +701,7 @@ BarWidget {
     ChipText {
       id: loadLabel
       anchors.verticalCenter: parent.verticalCenter
+      anchors.verticalCenterOffset: 1
       text: "LOAD"
       color: root.dim(monitorTheme.loadColor, 0.82)
       font.weight: Font.DemiBold
@@ -712,6 +719,7 @@ BarWidget {
 
     ChipText {
       anchors.verticalCenter: parent.verticalCenter
+      anchors.verticalCenterOffset: 1
       text: root.ready ? MonitorModel.formatLoad(root.loadOne) : "…"
       color: monitorTheme.loadColor
       width: monitorTheme.graphWidth
@@ -726,6 +734,7 @@ BarWidget {
     ChipText {
       id: uptimeLabel
       anchors.verticalCenter: parent.verticalCenter
+      anchors.verticalCenterOffset: 1
       text: "UP"
       color: root.dim(monitorTheme.uptimeColor, 0.82)
       font.weight: Font.DemiBold
@@ -733,6 +742,7 @@ BarWidget {
 
     ChipText {
       anchors.verticalCenter: parent.verticalCenter
+      anchors.verticalCenterOffset: 1
       text: root.ready ? MonitorModel.formatCompactUptime(root.uptimeSeconds) : "…"
       color: monitorTheme.uptimeColor
       horizontalAlignment: Text.AlignRight
@@ -758,6 +768,7 @@ BarWidget {
     ChipText {
       id: sensorLabel
       anchors.verticalCenter: parent.verticalCenter
+      anchors.verticalCenterOffset: 1
       text: root.sensorDisplayLabel(sensorInstrument.monitorId)
       color: root.dim(sensorInstrument.instrumentColor, 0.82)
       font.weight: Font.DemiBold
@@ -784,6 +795,7 @@ BarWidget {
 
     ChipText {
       anchors.verticalCenter: parent.verticalCenter
+      anchors.verticalCenterOffset: 1
       text: root.sensorValueText(sensorInstrument.reading)
       color: root.sensorLevelColor(sensorInstrument.reading)
       width: sensorValueMetrics.advanceWidth
