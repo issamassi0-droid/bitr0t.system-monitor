@@ -1013,16 +1013,13 @@ BarWidget {
     fixedWidth: chipLoader.implicitWidth
       + (root.chipMode === "minimal" ? 0 : monitorTheme.chipPadding * 2)
     fixedHeight: root.barSize
-    tooltipText: root.tooltip
 
 
     onPressed: function(button) {
-      if (button === Qt.MiddleButton && root.bar)
-        root.bar.run("omarchy-launch-or-focus-tui btop")
-      else if (button === Qt.LeftButton)
+      if (button === Qt.LeftButton)
         root.togglePanel()
-      else if (button === Qt.RightButton)
-        root.openTaskManager()
+      else if (button === Qt.RightButton && root.bar)
+        root.bar.run("omarchy-launch-or-focus-tui btop")
     }
 
     Rectangle {
