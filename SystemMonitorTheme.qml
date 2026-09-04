@@ -102,7 +102,7 @@ QtObject {
   readonly property real graphWidth: numberToken(
     "graph-width", Style.space(42), 16, 256)
   readonly property real graphHeight: numberToken(
-    "graph-height", Style.space(12), 4, 128)
+    "graph-height", Style.space(16), 4, 128)
   readonly property string minimalSeparator: stringToken(
     "minimal-separator", " · ", 16)
 }
